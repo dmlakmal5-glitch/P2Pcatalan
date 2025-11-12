@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>📦 Inventory Transactions — Offline</title>
+  <style>
+    :root { --primary: #2563eb; --border: #cbd5e1; --bg: #f8fafc; --text: #1e293b; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: var(--bg); }
+    .container { max-width: 1000px; margin: 0 auto; background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+    h1 { text-align: center; margin-top: 0; }
+    .section { margin-bottom: 20px; }
+    label { display: block; margin-bottom: 6px; font-weight: 600; }
+    input[type="file"], input[type="text"], button {
+      width: 100%; padding: 12px; font-size: 16px;
+      border: 1px solid var(--border); border-radius: 8px;
+    }
+    button { background: var(--primary); color: white; border: none; cursor: pointer; font-weight: 600; }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    button.danger { background: #e11d48; }
+    button.danger:hover { background: #be123c; }
+    .suggestions {
+      position: absolute; z-index: 10; width: 100%;
+      max-height: 180px; overflow-y: auto;
+      border: 1px solid var(--border); border-radius: 0 0 8px 8px;
+      background: white; display: none;
+    }
+    .suggestion-item { padding: 8px 12px; cursor: pointer; }
+    .suggestion-item:hover { background: #dbeafe; }
+    .barcode-list { margin-top: 16px; }
+    .barcode-item {
+      display: flex; align-items: flex-start;
+      padding: 10px 0; border-bottom: 1px solid #f1f5f9;
+    }
+    .barcode-item:last-child { border: none; }
+    .barcode-item input[type="checkbox"] {
+      margin-top: 4px; margin-right: 10px; transform: scale(1.2);
+    }
+    .barcode-info { flex: 1; }
+    .barcode-info strong { font-family: monospace; font-size: 15px; }
+    .barcode-info .desc { font-size: 13px; color: #64748b; margin-top: 2px; }
+    .qty-input {
+      width: 80px; padding: 6px; margin-left: 10px;
+      border: 1px solid #e2e8f0; border-radius: 4px;
+    }
+    .qty-input:disabled { background: #f8fafc; color: #94a3b8; }
+
+    /* Pending Table */
+    .pending-title { font-weight: 600; margin: 16px 0 8px; }
+    .pending-table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+    th { background: #f1f5f9; font-weight: 600; }
+    .actions-col { white-space: nowrap; }
+    .edit-btn, .delete-btn {
+      padding: 4px 8px; font-size: 12px; margin: 0 2px;
+      border-radius: 4px; cursor: pointer;
+    }
+    .edit-btn { background: #3b82f6; color: white; }
+    .delete-btn { background: #ef4444; color: white; }
+
+    /* Transactions History */
+    .history-section { margin-top: 24px; }
+    .history-title { font-weight: 600; margin-bottom: 10px; }
+    .txn-filters { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .txn-filters input, .txn-filters button { width: auto; }
+
+    .status { margin-top: 12px; padding: 10px; border-radius: 6px; font-size: 14px; }
+    .status.info { background: #dbeafe; color: #1e40af; }
+    .status.warn { background: #fef9c3; color: #92400e; }
+    .status.error { background: #fee2e2; color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📦 Offline Inventory — Transactions</h1>
+
+    <!-- Upload -->
+    <div class="section">
+      <label for="fileInput">📁 Upload Master Excel (e.g., <code>exel.xlsx</code>)</label>
+      <input type="file" id="fileInput" accept=".xlsx,.xls" />
+      <div class="status info" id="status">⚠️ Upload master data to begin</div>
+    </div>
+
+    <!-- Entry -->
+    <div class="section" id="entrySection" style="display:none;">
+      <label for="codeInput">🔍 Enter Product Code (e.g. <code>102530-02BLK</code>)</label>
+      <input type="text" id="codeInput" placeholder="Start typing…" autocomplete="off" disabled />
+      <div class="suggestions" id="suggestions"></div>
+      <div class="barcode-list" id="barcodeList">
+        <div class="empty">👆 Upload file, then enter a code</div>
+      </div>
+      <button id="submitBtn" disabled style="margin-top:16px;">➕ Add to Transaction</button>
+    </div>
+
+    <!-- Pending Items -->
+    <div class="pending-section">
+      <div class="pending-title">📋 Current Transaction — <span id="itemCount">0</span> item(s)</div>
+      <div class="pending-table-wrap">
+        <table id="pendingTable">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Barcode</th>
+              <th>Description</th>
+              <th>Qty</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="pendingBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Save & Export Controls -->
+    <div class="actions" style="display:flex;gap:12px;margin-top:16px;">
+      <button id="saveBtn" disabled>💾 Save Transaction (T<span id="txnNum">001</span>)</button>
+      <button id="exportSelectedBtn" disabled>📥 Export Selected</button>
+      <button id="exportAllBtn" disabled>📤 Export All Transactions</button>
+    </div>
+
+    <!-- Transaction History -->
+    <div class="history-section" id="historySection" style="display:none;">
+      <div class="history-title">📊 Transaction History (<span id="txnCount">0</span> saved)</div>
+      <div class="txn-filters">
+        <input type="text" id="txnFilter" placeholder="Filter by T-number (e.g. T001)" />
+        <button id="deleteTxnBtn" class="danger">🗑️ Delete Selected</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table id="historyTable">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="selectAllTxn" /></th>
+              <th>Txn #</th>
+              <th>Datetime</th>
+              <th>Items</th>
+              <th>Total Qty</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- SheetJS (CDN — cached after first load) -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+  
+  <script>
+    // DOM
+    const fileInput = document.getElementById('fileInput');
+    const codeInput = document.getElementById('codeInput');
+    const suggestionsDiv = document.getElementById('suggestions');
+    const barcodeList = document.getElementById('barcodeList');
+    const statusDiv = document.getElementById('status');
+    const entrySection = document.getElementById('entrySection');
+    const submitBtn = document.getElementById('submitBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const exportSelectedBtn = document.getElementById('exportSelectedBtn');
+    const exportAllBtn = document.getElementById('exportAllBtn');
+    const pendingBody = document.getElementById('pendingBody');
+    const itemCountSpan = document.getElementById('itemCount');
+    const txnNumSpan = document.getElementById('txnNum');
+    const historySection = document.getElementById('historySection');
+    const historyBody = document.getElementById('historyBody');
+    const txnCountSpan = document.getElementById('txnCount');
+    const txnFilter = document.getElementById('txnFilter');
+    const deleteTxnBtn = document.getElementById('deleteTxnBtn');
+    const selectAllTxn = document.getElementById('selectAllTxn');
+
+    // Data
+    let codeToBarcodes = {};
+    let barcodeToDesc = {};
+    let allCodes = [];
+    let pendingItems = []; // { id, code, barcode, description, qty }
+    let transactions = []; // { id, txnId, timestamp, items: [same shape] }
+    let nextTxnId = 1;
+    let pendingId = 1;
+
+    // === File Upload & Parse ===
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      updateStatus('📁 Reading Excel file...', 'info');
+
+      try {
+        const data = await file.arrayBuffer();
+        const wb = XLSX.read(data, { type: 'array' });
+
+        // Parse Sheet2: Code → Barcode
+        const sheet2 = wb.Sheets.Sheet2;
+        if (!sheet2) throw new Error('❌ Sheet2 not found');
+        const sheet2Data = XLSX.utils.sheet_to_json(sheet2, { header: 1 });
+        codeToBarcodes = {};
+        for (let i = 1; i < sheet2Data.length; i++) {
+          const row = sheet2Data[i];
+          const code = String(row[0] || '').trim().toUpperCase();
+          const barcode = String(row[1] || '').trim();
+          if (code && barcode) {
+            if (!codeToBarcodes[code]) codeToBarcodes[code] = [];
+            if (!codeToBarcodes[code].includes(barcode)) {
+              codeToBarcodes[code].push(barcode);
+            }
+          }
+        }
+
+        // Parse first sheet: Barcode → Description
+        const firstSheet = wb.Sheets[wb.SheetNames[0]];
+        const descData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+        barcodeToDesc = {};
+        for (let i = 1; i < descData.length; i++) {
+          const row = descData[i];
+          const bc = String(row[0] || '').trim();
+          const desc = String(row[1] || '').trim();
+          if (bc && desc) {
+            barcodeToDesc[bc] = desc;
+          }
+        }
+
+        allCodes = Object.keys(codeToBarcodes).sort();
+        updateStatus(`✅ Loaded ${allCodes.length} codes. Ready!`, 'info');
+        entrySection.style.display = 'block';
+        codeInput.disabled = false;
+        codeInput.focus();
+
+      } catch (err) {
+        updateStatus(`❌ Error: ${err.message || 'Parse failed'}`, 'error');
+        console.error(err);
+      }
+    });
+
+    // === Auto-suggest + Load Barcodes ===
+    codeInput.addEventListener('input', () => {
+      const query = codeInput.value.trim().toUpperCase();
+      suggestionsDiv.innerHTML = '';
+      suggestionsDiv.style.display = 'none';
+
+      if (!query || allCodes.length === 0) return;
+
+      const matches = allCodes.filter(c => c.includes(query)).slice(0, 8);
+      if (matches.length > 0) {
+        suggestionsDiv.style.display = 'block';
+        suggestionsDiv.innerHTML = matches.map(c =>
+          `<div class="suggestion-item" data-code="${c}">${c}</div>`
+        ).join('');
+        suggestionsDiv.querySelectorAll('.suggestion-item').forEach(el => {
+          el.addEventListener('click', () => {
+            codeInput.value = el.dataset.code;
+            suggestionsDiv.style.display = 'none';
+            loadBarcodes(el.dataset.code);
+          });
+        });
+      }
+    });
+
+    document.addEventListener('click', e => {
+      if (!codeInput.contains(e.target) && !suggestionsDiv.contains(e.target)) {
+        suggestionsDiv.style.display = 'none';
+      }
+    });
+
+    function loadBarcodes(code) {
+      const barcodes = codeToBarcodes[code.toUpperCase()] || [];
+      barcodeList.innerHTML = '';
+
+      if (barcodes.length === 0) {
+        barcodeList.innerHTML = `<div class="empty">⚠️ No barcodes for: <code>${code}</code></div>`;
+        submitBtn.disabled = true;
+        return;
+      }
+
+      barcodes.forEach(bc => {
+        const desc = barcodeToDesc[bc] || bc;
+        const item = document.createElement('div');
+        item.className = 'barcode-item';
+        item.innerHTML = `
+          <input type="checkbox" id="cb-${bc}" />
+          <div class="barcode-info">
+            <strong>${bc}</strong>
+            <div class="desc">${desc}</div>
+          </div>
+          <input type="number" class="qty-input" id="qty-${bc}" min="1" value="1" disabled />
+        `;
+        barcodeList.appendChild(item);
+
+        const cb = item.querySelector(`#cb-${bc}`);
+        const qty = item.querySelector(`#qty-${bc}`);
+        cb.addEventListener('change', () => {
+          qty.disabled = !cb.checked;
+          if (cb.checked) qty.focus();
+        });
+      });
+
+      submitBtn.disabled = false;
+    }
+
+    // === Submit to Pending (with accumulation & edit) ===
+    submitBtn.addEventListener('click', () => {
+      const code = codeInput.value.trim().toUpperCase();
+      const selected = [];
+
+      document.querySelectorAll('.barcode-item').forEach(item => {
+        const cb = item.querySelector('input[type="checkbox"]');
+        if (cb.checked) {
+          const bc = cb.id.replace('cb-', '');
+          const qty = parseInt(item.querySelector('.qty-input').value) || 0;
+          const desc = barcodeToDesc[bc] || '';
+          selected.push({ code, barcode: bc, description: desc, qty });
+        }
+      });
+
+      if (selected.length === 0) {
+        updateStatus('❌ No items selected.', 'error');
+        return;
+      }
+
+      // Merge with existing pending items (accumulate qty)
+      selected.forEach(sel => {
+        const existing = pendingItems.find(p => p.barcode === sel.barcode);
+        if (existing) {
+          existing.qty += sel.qty;
+        } else {
+          pendingItems.push({ id: pendingId++, ...sel });
+        }
+      });
+
+      renderPending();
+      updateStatus(`✅ ${selected.length} item(s) added. Total: ${pendingItems.length}`, 'info');
+
+      // Reset
+      codeInput.value = '';
+      barcodeList.innerHTML = '';
+    });
+
+    function renderPending() {
+      pendingBody.innerHTML = '';
+      pendingItems.forEach(item => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${item.code}</td>
+          <td>${item.barcode}</td>
+          <td>${item.description}</td>
+          <td><input type="number" class="edit-qty" data-id="${item.id}" value="${item.qty}" min="1" style="width:60px;padding:4px;" /></td>
+          <td class="actions-col">
+            <button class="edit-btn" data-id="${item.id}">✓ Save</button>
+            <button class="delete-btn" data-id="${item.id}">🗑️</button>
+          </td>
+        `;
+        pendingBody.appendChild(row);
+      });
+
+      // Attach edit & delete handlers
+      pendingBody.querySelectorAll('.edit-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const id = parseInt(btn.dataset.id);
+          const qtyInput = pendingBody.querySelector(`input[data-id="${id}"]`);
+          const qty = parseInt(qtyInput.value) || 1;
+          const item = pendingItems.find(p => p.id === id);
+          if (item) {
+            item.qty = qty;
+            updateStatus(`✅ Qty updated for ${item.barcode}`, 'info');
+          }
+        });
+      });
+
+      pendingBody.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const id = parseInt(btn.dataset.id);
+          pendingItems = pendingItems.filter(p => p.id !== id);
+          renderPending();
+          updateStatus(`🗑️ Item removed`, 'info');
+        });
+      });
+
+      itemCountSpan.textContent = pendingItems.length;
+      saveBtn.disabled = pendingItems.length === 0;
+      exportSelectedBtn.disabled = pendingItems.length === 0;
+    }
+
+    // === Save Transaction ===
+    saveBtn.addEventListener('click', () => {
+      if (pendingItems.length === 0) return;
+
+      const txnId = `T${String(nextTxnId).padStart(3, '0')}`;
+      const txn = {
+        id: Date.now(),
+        txnId,
+        timestamp: new Date().toISOString(),
+        items: pendingItems.map(p => ({ ...p }))
+      };
+
+      transactions.push(txn);
+      nextTxnId++;
+      pendingItems = [];
+      pendingId = 1;
+      renderPending();
+      renderHistory();
+
+      txnNumSpan.textContent = String(nextTxnId).padStart(3, '0');
+      exportAllBtn.disabled = transactions.length === 0;
+      historySection.style.display = 'block';
+      updateStatus(`✅ Transaction ${txnId} saved!`, 'info');
+    });
+
+    // === Render Transaction History ===
+    function renderHistory() {
+      const filter = txnFilter.value.trim().toUpperCase();
+      historyBody.innerHTML = '';
+      const filtered = filter
+        ? transactions.filter(t => t.txnId.includes(filter))
+        : transactions;
+
+      filtered.forEach(txn => {
+        const totalQty = txn.items.reduce((sum, i) => sum + i.qty, 0);
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td><input type="checkbox" class="txn-checkbox" data-id="${txn.id}" /></td>
+          <td>${txn.txnId}</td>
+          <td>${new Date(txn.timestamp).toLocaleString()}</td>
+          <td>${txn.items.length}</td>
+          <td>${totalQty}</td>
+        `;
+        historyBody.appendChild(row);
+      });
+
+      txnCountSpan.textContent = transactions.length;
+
+      // Checkbox handlers
+      historyBody.querySelectorAll('.txn-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateDeleteButton);
+      });
+      selectAllTxn.checked = false;
+      updateDeleteButton();
+    }
+
+    selectAllTxn.addEventListener('change', () => {
+      const isChecked = selectAllTxn.checked;
+      historyBody.querySelectorAll('.txn-checkbox').forEach(cb => cb.checked = isChecked);
+      updateDeleteButton();
+    });
+
+    txnFilter.addEventListener('input', renderHistory);
+
+    function updateDeleteButton() {
+      const checked = historyBody.querySelectorAll('.txn-checkbox:checked');
+      deleteTxnBtn.disabled = checked.length === 0;
+    }
+
+    deleteTxnBtn.addEventListener('click', () => {
+      const toDelete = Array.from(historyBody.querySelectorAll('.txn-checkbox:checked'))
+        .map(cb => parseInt(cb.dataset.id));
+      transactions = transactions.filter(t => !toDelete.includes(t.id));
+      renderHistory();
+      exportAllBtn.disabled = transactions.length === 0;
+      updateStatus(`🗑️ Deleted ${toDelete.length} transaction(s)`, 'info');
+    });
+
+    // === Export ===
+    exportSelectedBtn.addEventListener('click', () => {
+      if (pendingItems.length === 0) return;
+      exportToExcel([{
+        txnId: 'DRAFT',
+        timestamp: new Date().toISOString(),
+        items: pendingItems
+      }], 'Draft_Transaction');
+    });
+
+    exportAllBtn.addEventListener('click', () => {
+      if (transactions.length === 0) return;
+      exportToExcel(transactions, 'All_Transactions');
+    });
+
+    function exportToExcel(txns, filenamePrefix) {
+      try {
+        const rows = [];
+        // Header
+        rows.push(['Txn #', 'Datetime', 'Code', 'Barcode', 'Description', 'Qty']);
+        // Data
+        txns.forEach(txn => {
+          txn.items.forEach(item => {
+            rows.push([
+              txn.txnId,
+              new Date(txn.timestamp).toLocaleString(),
+              item.code,
+              item.barcode,
+              item.description,
+              item.qty
+            ]);
+          });
+        });
+
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Transactions');
+        const filename = `${filenamePrefix}_${new Date().toISOString().slice(0,10)}.xlsx`;
+        XLSX.writeFile(wb, filename);
+        updateStatus(`✅ Exported to ${filename}`, 'info');
+      } catch (err) {
+        updateStatus(`❌ Export failed: ${err.message}`, 'error');
+      }
+    }
+
+    function updateStatus(msg, type = 'info') {
+      statusDiv.className = `status ${type}`;
+      statusDiv.textContent = msg;
+    }
+  </script>
+</body>
+</html>
